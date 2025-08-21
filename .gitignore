@@ -1,0 +1,30 @@
+# Ignore secrets
+config/
+*.json
+client_secret_*.json
+credentials.json
+token.json
+
+# Ignore the problematic doc file
+CONFIGURATION_CHANGES_SUMMARY.md
+
+# Ignore large binaries
+tools/ffmpeg-master-latest-win64-gpl/
+*.exe
+*.zip
+*.7z
+*.mp4
+*.mkv
+*.mov
+
+# Python cache & venv
+__pycache__/
+*.pyc
+venv/
+
+# OS junk
+.DS_Store
+Thumbs.db
+*.log
+__pycache__/
+*.pyc
