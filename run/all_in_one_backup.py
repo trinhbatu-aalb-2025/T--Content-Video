@@ -14,8 +14,8 @@ Tất cả trong một script duy nhất
         7. Viết lại text bằng Gemini API (cấu trúc đầy đủ: 5 tiêu đề + nội dung + captions + CTA)
         8. Upload text đã viết lại lên Google Drive
         9. Tạo text không có timeline (chỉ nội dung chính)
-            10. Tạo gợi ý tiêu đề, captions, CTA (không có icon) - ĐÃ LOẠI BỎ
-    11. Cập nhật kết quả lên Google Sheets (1 cột mới: Text no timeline)
+        10. Tạo gợi ý tiêu đề, captions, CTA (không có icon)
+        11. Cập nhật kết quả lên Google Sheets (2 cột mới: Text no timeline + Gợi ý tiêu đề)
 
 Tính năng mới:
 - Tự động phát hiện ngôn ngữ (tiếng Việt/tiếng Trung)
@@ -44,6 +44,7 @@ import signal
 import atexit
 import time
 from typing import List, Dict, Tuple
+from datetime import datetime, timedelta
 
 # Google API imports
 from google.oauth2.credentials import Credentials
@@ -55,6 +56,9 @@ from googleapiclient.errors import HttpError
 
 # Import VideoStatusChecker
 from video_checker import VideoStatusChecker
+
+# Import TokenCalculator
+from token_calculator import TokenCalculator
 
 # Configuration
 SCOPES = [
@@ -87,9 +91,9 @@ class AllInOneProcessor:
     - Dịch tiếng Trung sang tiếng Việt
     - Viết lại text bằng Gemini (cấu trúc đầy đủ: 5 tiêu đề + nội dung timeline + captions + CTA)
     - Tạo text không có timeline (chỉ nội dung chính, chia đoạn rõ ràng)
-    - Tạo gợi ý tiêu đề, captions, CTA riêng biệt (không có icon) - ĐÃ LOẠI BỎ
+    - Tạo gợi ý tiêu đề, captions, CTA riêng biệt (không có icon)
     - Upload tất cả file lên Google Drive
-    - Cập nhật kết quả lên Google Sheets (1 cột mới: Text no timeline)
+    - Cập nhật kết quả lên Google Sheets (2 cột mới: Text no timeline + Gợi ý tiêu đề)
     """
     
     def __init__(self):
@@ -121,6 +125,31 @@ class AllInOneProcessor:
         # Google Sheets ID - Thay đổi nếu cần
         self.spreadsheet_id = '1y4Gmc58DCRmnyO9qNlSBklkvebL5mY9gLlOqcP91Epg'
         self.sheet_name = 'Mp3 to text'  # Tên sheet chính xác theo yêu cầu của người dùng
+        
+        # API Rate Limiting và Monitoring
+        self.api_call_count = {
+            'deepgram': 0,
+            'gemini': 0,
+            'google_drive': 0,
+            'google_sheets': 0
+        }
+        self.api_last_call_time = {
+            'deepgram': datetime.now(),
+            'gemini': datetime.now(),
+            'google_drive': datetime.now(),
+            'google_sheets': datetime.now()
+        }
+        self.api_delays = {
+            'deepgram': 2,  # 2 giây giữa các calls
+            'gemini': 3,    # 3 giây giữa các calls
+            'google_drive': 1,  # 1 giây giữa các calls
+            'google_sheets': 1  # 1 giây giữa các calls
+        }
+        self.video_delay = 8  # 8 giây giữa các video
+        
+        # Khởi tạo Token Calculator
+        self.token_calculator = TokenCalculator()
+        
         # Thử với tên sheet khác nếu lỗi
         # Có thể tên sheet có khoảng trắng, sẽ thử với tên khác nếu lỗi
         # Hoặc có thể tên sheet là "Mp3 to text" hoặc "mp3 to text"
@@ -222,6 +251,36 @@ class AllInOneProcessor:
             logger.error(f"❌ Lỗi xác thực Google APIs: {str(e)}")
             raise
 
+    def _wait_for_api_rate_limit(self, api_name: str):
+        """
+        Đợi để tuân thủ rate limiting cho API
+        """
+        current_time = datetime.now()
+        last_call_time = self.api_last_call_time[api_name]
+        delay_required = self.api_delays[api_name]
+        
+        time_since_last_call = (current_time - last_call_time).total_seconds()
+        
+        if time_since_last_call < delay_required:
+            wait_time = delay_required - time_since_last_call
+            logger.info(f"⏳ Đợi {wait_time:.1f}s để tuân thủ rate limit cho {api_name}")
+            time.sleep(wait_time)
+        
+        self.api_last_call_time[api_name] = datetime.now()
+        self.api_call_count[api_name] += 1
+
+    def _log_api_usage(self):
+        """
+        Log tổng số API calls đã thực hiện
+        """
+        total_calls = sum(self.api_call_count.values())
+        logger.info(f"📊 API Usage Summary:")
+        logger.info(f"  - Deepgram: {self.api_call_count['deepgram']} calls")
+        logger.info(f"  - Gemini: {self.api_call_count['gemini']} calls")
+        logger.info(f"  - Google Drive: {self.api_call_count['google_drive']} calls")
+        logger.info(f"  - Google Sheets: {self.api_call_count['google_sheets']} calls")
+        logger.info(f"  - Total: {total_calls} calls")
+
     def detect_chinese_characters(self, text: str) -> bool:
         """
         Phát hiện xem text có chứa ký tự tiếng Trung không
@@ -318,6 +377,28 @@ class AllInOneProcessor:
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(transcript)
             
+            # Track token usage cho Deepgram (ước tính thời lượng audio)
+            try:
+                import subprocess
+                # Lấy thời lượng audio bằng ffprobe
+                cmd = [
+                    os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools", "ffprobe.exe"),
+                    "-v", "quiet",
+                    "-show_entries", "format=duration",
+                    "-of", "csv=p=0",
+                    audio_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    duration = float(result.stdout.strip())
+                    self.token_calculator.track_api_call(
+                        operation="speech_to_text",
+                        audio_duration=duration,
+                        api_type="deepgram"
+                    )
+            except Exception as e:
+                logger.warning(f"⚠️ Không thể lấy thời lượng audio: {str(e)}")
+            
             logger.info(f"✅ Chuyển đổi text thành công!")
             logger.info(f"📁 File text: {output_path}")
             logger.info(f"📝 Độ dài text: {len(transcript)} ký tự")
@@ -381,6 +462,10 @@ class AllInOneProcessor:
                 
                 logger.info(f"🔄 Đang gửi request đến Deepgram API với ngôn ngữ: {language} và timeline")
                 logger.info(f"📊 Tham số tối ưu cho timeline: {params}")
+                
+                # Rate limiting cho Deepgram API
+                self._wait_for_api_rate_limit('deepgram')
+                
                 response = requests.post(url, headers=headers, params=params, data=audio_file, timeout=600)
                 
                 logger.info(f"📡 Response status: {response.status_code}")
@@ -749,14 +834,12 @@ class AllInOneProcessor:
 
     def translate_chinese_to_vietnamese(self, text_path: str, output_name: str) -> str:
         """
-        Dịch text tiếng Trung sang tiếng Việt bằng Gemini API với độ chính xác cao
+        Dịch text tiếng Trung sang tiếng Việt bằng Gemini API với batch processing tối ưu
 
-Áp dụng phương pháp dịch "sát nghĩa" + tối ưu cho nội dung nội thất:
-1. Tham số ít bay bổng (temperature: 0-0.2, top_p: 0.2-0.4, top_k: 1)
-2. Bảng thuật ngữ nội thất & kiến trúc để giữ nghĩa nhất quán
-3. Dịch theo từng câu hoặc đoạn ngắn kèm ngữ cảnh video/nội dung
-4. QA trung thành: Kiểm tra lại bản dịch để loại bỏ từ Hán Việt khó hiểu, chỉnh câu mượt hơn
-5. Giữ tone chuyên nghiệp, phù hợp với bài giới thiệu nội thất
+Tối ưu hóa:
+1. Batch processing - dịch toàn bộ text trong 1 lần thay vì từng câu
+2. Rate limiting - tuân thủ delay giữa các API calls
+3. Monitoring - theo dõi số lượng API calls
 
 Args:
     text_path: Đường dẫn đến file text tiếng Trung
@@ -770,36 +853,31 @@ Returns:
             base_name = os.path.splitext(output_name)[0]
             output_path = os.path.join(self.temp_dir, f"{base_name}_translated.txt")
             
-            logger.info(f"🔄 Đang dịch text tiếng Trung sang tiếng Việt (chế độ sát nghĩa): {os.path.basename(text_path)}")
+            logger.info(f"🔄 Đang dịch text tiếng Trung sang tiếng Việt (batch processing): {os.path.basename(text_path)}")
             
             # Đọc text tiếng Trung từ file
             with open(text_path, 'r', encoding='utf-8') as f:
                 chinese_text = f.read()
             
-            # Bước 1: Chuẩn bị văn bản để dịch
-            sentences_with_context = self._prepare_sentences_with_context(chinese_text)
+            # Rate limiting cho Gemini API
+            self._wait_for_api_rate_limit('gemini')
             
-            # Bước 2: Dịch nguyên bản sát nghĩa
-            translated_sentences = []
-            for i, (text, context, has_timeline) in enumerate(sentences_with_context):
-                logger.info(f"📝 Đang dịch văn bản {i+1}/{len(sentences_with_context)}")
-                
-                # Dịch với bảo toàn timeline
-                translated_text = self._translate_sentence_with_timeline(text, context)
-                translated_sentences.append(translated_text)
+            # Dịch toàn bộ text trong 1 lần (batch processing)
+            final_translation = self._translate_batch_with_timeline(chinese_text)
             
-            # Bước 3: Ghép lại thành văn bản hoàn chỉnh
-            final_translation = ' '.join(translated_sentences)
-            
-            # Bước 4: QA trung thành - kiểm tra và sửa lỗi
-            logger.info("🔍 Bước QA trung thành - kiểm tra và sửa lỗi...")
-            final_translation = self._qa_fidelity_check_with_timeline(chinese_text, final_translation)
+            # Track token usage cho translation
+            self.token_calculator.track_api_call(
+                operation="translate_chinese_to_vietnamese",
+                input_text=chinese_text,
+                output_text=final_translation,
+                api_type="gemini"
+            )
             
             # Lưu text đã dịch vào file
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(final_translation)
             
-            logger.info(f"✅ Dịch text thành công (chế độ sát nghĩa)!")
+            logger.info(f"✅ Dịch text thành công (batch processing)!")
             logger.info(f"📁 File: {output_path}")
             logger.info(f"📝 Độ dài text: {len(final_translation)} ký tự")
             logger.info(f"📄 Nội dung: {final_translation[:200]}...")
@@ -809,6 +887,92 @@ Returns:
         except Exception as e:
             logger.error(f"❌ Lỗi dịch text: {str(e)}")
             raise
+
+    def _translate_batch_with_timeline(self, chinese_text: str) -> str:
+        """
+        Dịch toàn bộ text tiếng Trung sang tiếng Việt trong 1 lần (batch processing)
+        
+        Args:
+            chinese_text: Text tiếng Trung cần dịch
+            
+        Returns:
+            Text đã dịch sang tiếng Việt
+        """
+        try:
+            # Chuẩn bị request đến Gemini API
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
+            
+            # Lấy bảng thuật ngữ
+            terminology = self._get_terminology_table()
+            
+            # Prompt tối ưu cho batch processing
+            prompt = f"""
+            === DỊCH THUẬT BATCH - TRUNG SANG VIỆT ===
+            
+            {terminology}
+            
+            === YÊU CẦU DỊCH THUẬT ===
+            1. Dịch toàn bộ văn bản tiếng Trung sang tiếng Việt
+            2. Giữ nguyên timeline format: (Giây X-Y: nội dung)
+            3. Sử dụng thuật ngữ chuyên ngành từ bảng trên
+            4. Dịch sát nghĩa, tự nhiên, dễ hiểu
+            5. Giữ tone chuyên nghiệp, phù hợp nội dung nội thất/kiến trúc
+            6. Bảo toàn cấu trúc và format gốc
+            
+            === VĂN BẢN CẦN DỊCH ===
+            {chinese_text}
+            
+            === KẾT QUẢ DỊCH ===
+            """
+            
+            data = {
+                "contents": [{
+                    "parts": [{"text": prompt}]
+                }],
+                "generationConfig": {
+                    "temperature": 0.1,        # Thấp để ổn định
+                    "topP": 0.3,              # Thấp để tập trung
+                    "topK": 1,                # Chọn kết quả tối ưu
+                    "maxOutputTokens": 20000  # Tăng giới hạn cho batch
+                }
+            }
+            
+            # Gửi request với retry logic
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(url, json=data, timeout=180)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        translated_text = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                        logger.info(f"✅ Batch translation thành công!")
+                        return translated_text
+                        
+                    elif response.status_code == 429:  # Rate limit
+                        wait_time = (2 ** attempt) * 5  # Exponential backoff với base 5s
+                        logger.warning(f"⚠️ Rate limit, đợi {wait_time}s trước khi thử lại...")
+                        time.sleep(wait_time)
+                        continue
+                        
+                    else:
+                        logger.warning(f"⚠️ Lỗi API: {response.status_code}")
+                        if attempt == max_retries - 1:
+                            logger.error(f"❌ Không thể dịch sau {max_retries} lần thử")
+                            return chinese_text  # Trả về text gốc
+                        time.sleep(2)
+                        continue
+                        
+                except requests.exceptions.Timeout:
+                    logger.warning(f"⚠️ Timeout, thử lại lần {attempt + 1}/{max_retries}")
+                    if attempt == max_retries - 1:
+                        return chinese_text
+                    time.sleep(3)
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"❌ Lỗi batch translation: {str(e)}")
+            return chinese_text
 
     def _prepare_sentences_with_context(self, text: str) -> List[Tuple[str, str]]:
         """
@@ -1714,11 +1878,6 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
             - Thay "hack" bằng: "bí quyết", "mẹo", "cách", "phương pháp"
             - Thay "tự hào" bằng: "hiện đại", "tiên tiến", "tối ưu"
             
-            🚫 **TỪ CUỐI CÂU KHÔNG CHUYÊN NGHIỆP:**
-            - Không dùng "nè", "ạ", "nhỉ", "đấy", "thế", "rồi", "luôn", "đó" ở cuối câu
-            - Kết thúc câu bằng dấu chấm, không dùng từ đệm không cần thiết
-            - Giữ giọng văn chuyên nghiệp, không suồng sã
-            
             🎯 **TẠO NỘI DUNG MỚI HOÀN TOÀN - PHẢI HAY HƠN BẢN GỐC:**
             - KHÔNG copy nội dung gốc - VIẾT MỚI HOÀN TOÀN
             - Chỉ lấy ý tưởng chủ đề để viết mới, sáng tạo hơn
@@ -1972,6 +2131,9 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                 }
             }
             
+            # Rate limiting cho Gemini API
+            self._wait_for_api_rate_limit('gemini')
+            
             # Gửi request đến Gemini API
             logger.info("Đang gửi request đến Gemini API để viết lại nội dung...")
             response = requests.post(url, json=data, timeout=360)
@@ -1989,6 +2151,14 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                 # Lưu text mới vào file
                 with open(output_path, 'w', encoding='utf-8') as f:
                     f.write(rewritten_text)
+                
+                # Track token usage cho rewrite
+                self.token_calculator.track_api_call(
+                    operation="rewrite_text",
+                    input_text=original_text,
+                    output_text=rewritten_text,
+                    api_type="gemini"
+                )
                 
                 logger.info(f"✅ Viết lại text thành công (nội dung mới)!")
                 logger.info(f"📁 File: {output_path}")
@@ -3590,9 +3760,6 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                 "độc đáo": ["đặc biệt", "nổi bật"]
             }
             
-            # Danh sách từ cuối câu không chuyên nghiệp cần loại bỏ
-            unprofessional_endings = ["nè", "ạ", "nhỉ", "đấy", "thế", "rồi", "luôn", "đó"]
-            
             # Thay thế từng từ cấm
             for forbidden_word, replacements in forbidden_words.items():
                 if forbidden_word in text:
@@ -3602,35 +3769,7 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                     text = text.replace(forbidden_word, replacement)
                     logger.info(f"🔄 Đã thay thế '{forbidden_word}' bằng '{replacement}'")
             
-            # Loại bỏ từ cuối câu không chuyên nghiệp
-            lines = text.split('\n')
-            cleaned_lines = []
-            
-            for line in lines:
-                line_clean = line.strip()
-                if not line_clean:
-                    cleaned_lines.append(line)
-                    continue
-                
-                # Loại bỏ từ cuối câu không chuyên nghiệp
-                for ending in unprofessional_endings:
-                    # Kiểm tra nếu từ kết thúc câu
-                    if line_clean.endswith(f" {ending}"):
-                        line_clean = line_clean[:-len(f" {ending}")]
-                        logger.info(f"🔄 Đã loại bỏ từ cuối câu không chuyên nghiệp: '{ending}'")
-                        break
-                    elif line_clean.endswith(ending):
-                        line_clean = line_clean[:-len(ending)]
-                        logger.info(f"🔄 Đã loại bỏ từ cuối câu không chuyên nghiệp: '{ending}'")
-                        break
-                
-                # Đảm bảo câu kết thúc bằng dấu chấm nếu cần
-                if line_clean and not line_clean.endswith(('.', '!', '?')):
-                    line_clean += '.'
-                
-                cleaned_lines.append(line_clean)
-            
-            return '\n'.join(cleaned_lines)
+            return text
             
         except Exception as e:
             logger.error(f"❌ Lỗi filter forbidden words: {str(e)}")
@@ -3828,9 +3967,9 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
             logger.info("📄 Bước 11: Tạo text không có timeline...")
             text_no_timeline_path = self.create_text_without_timeline(rewritten_text_path, video_name)
             
-            # Bước 12: Tạo gợi ý tiêu đề, captions, CTA - ĐÃ LOẠI BỎ
-            # logger.info("💡 Bước 12: Tạo gợi ý tiêu đề, captions, CTA...")
-            # suggestions_path = self.create_suggestions_content(rewritten_text_path, video_name)
+            # Bước 12: Tạo gợi ý tiêu đề, captions, CTA (cho cột Gợi ý tiêu đề)
+            logger.info("💡 Bước 12: Tạo gợi ý tiêu đề, captions, CTA...")
+            suggestions_path = self.create_suggestions_content(rewritten_text_path, video_name)
             
             # Bước 11: Chuyển đổi text đã viết lại thành speech - ĐÃ COMMENT
             # logger.info("🎤 Bước 11: Chuyển đổi text thành speech...")
@@ -3855,7 +3994,7 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                 'rewritten_text_path': rewritten_text_path,
                 'main_content_path': main_content_path,
                 'text_no_timeline_path': text_no_timeline_path,
-                # 'suggestions_path': suggestions_path,  # ĐÃ LOẠI BỎ
+                'suggestions_path': suggestions_path,
                 # 'tts_audio_path': tts_audio_path  # ĐÃ COMMENT
             }
             
@@ -3943,6 +4082,11 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                 
                 logger.info(f"\n🎬 === XỬ LÝ VIDEO {i}/{total_videos}: {video_name} ===")
                 
+                # Delay giữa các video để tránh rate limiting
+                if i > 1:  # Không delay cho video đầu tiên
+                    logger.info(f"⏳ Đợi {self.video_delay}s giữa các video để tránh rate limiting...")
+                    time.sleep(self.video_delay)
+                
                 try:
                     # Tải video từ Google Drive
                     logger.info("📥 Tải video từ Google Drive...")
@@ -3986,9 +4130,9 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                     logger.info("📄 Tạo text không có timeline...")
                     text_no_timeline_path = self.create_text_without_timeline(rewritten_text_path, video_name)
                     
-                    # Tạo gợi ý tiêu đề, captions, CTA - ĐÃ LOẠI BỎ
-                    # logger.info("💡 Tạo gợi ý tiêu đề, captions, CTA...")
-                    # suggestions_path = self.create_suggestions_content(rewritten_text_path, video_name)
+                    # Tạo gợi ý tiêu đề, captions, CTA (cho cột Gợi ý tiêu đề)
+                    logger.info("💡 Tạo gợi ý tiêu đề, captions, CTA...")
+                    suggestions_path = self.create_suggestions_content(rewritten_text_path, video_name)
                     
                     # Chuyển đổi text thành speech - ĐÃ COMMENT
                     # logger.info("🎤 Chuyển đổi text thành speech...")
@@ -4012,7 +4156,7 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                         'rewritten_text_path': rewritten_text_path,
                         'main_content_path': main_content_path,
                         'text_no_timeline_path': text_no_timeline_path,
-                        # 'suggestions_path': suggestions_path,  # ĐÃ LOẠI BỎ
+                        'suggestions_path': suggestions_path,
                         # 'tts_audio_path': tts_audio_path  # ĐÃ COMMENT
                     })
                     
@@ -4039,6 +4183,27 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                     logger.info("✅ Cập nhật Google Sheets hoàn tất!")
                 else:
                     logger.warning("⚠️ Cập nhật Google Sheets thất bại")
+            
+            # Log API usage summary
+            self._log_api_usage()
+            
+            # Log token usage summary (đảm bảo luôn hiển thị)
+            try:
+                self.token_calculator.log_summary()
+                
+                # Kiểm tra quota warnings
+                warnings = self.token_calculator.get_quota_warnings()
+                if warnings:
+                    logger.warning("🚨 QUOTA WARNINGS:")
+                    for warning in warnings:
+                        logger.warning(f"  {warning}")
+                        
+            except Exception as e:
+                logger.warning(f"⚠️ Không thể hiển thị token summary: {str(e)}")
+                # Fallback: hiển thị thông tin cơ bản
+                logger.info("📊 TOKEN USAGE SUMMARY (Basic):")
+                logger.info(f"  Total Operations: {len(self.token_calculator.token_usage)}")
+                logger.info(f"  Total Cost: ${self.token_calculator.total_cost:.6f}")
             
             return results
             
@@ -4173,6 +4338,11 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                     if 'text_no_timeline_path' in result:
                         text_no_timeline = self.read_text_file_content(result['text_no_timeline_path'])
                     
+                    # Đọc nội dung gợi ý tiêu đề
+                    suggestions_content = ""
+                    if 'suggestions_path' in result:
+                        suggestions_content = self.read_text_file_content(result['suggestions_path'])
+                    
                     # Thêm dữ liệu vào danh sách cập nhật
                     update_data.append([
                         video_link,           # Link mp4 (cột A)
@@ -4182,7 +4352,8 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                         original_text,        # Text gốc MP3 (cột E)
                         rewritten_link,       # Link text cải tiến (cột F)
                         rewritten_text,       # Text cải tiến (cột G)
-                        text_no_timeline      # Text no timeline (chỉ nội dung chính) (cột H)
+                        text_no_timeline,     # Text no timeline (chỉ nội dung chính) (cột H)
+                        suggestions_content   # Gợi ý tiêu đề (tiêu đề + captions + CTA) (cột I)
                         # tts_link              # Link text to speech - ĐÃ COMMENT
                     ])
                     
@@ -4194,7 +4365,7 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
             
             # Lấy dòng trống tiếp theo
             next_row = self.get_next_empty_row()
-            range_name = f'{self.sheet_name}!A{next_row}:H{next_row + len(update_data) - 1}'  # A-H: Link mp4, Tên Video, Link MP3, Link text gốc, Text gốc, Link text cải tiến, Text cải tiến, Text no timeline
+            range_name = f'{self.sheet_name}!A{next_row}:I{next_row + len(update_data) - 1}'  # A-I: Link mp4, Tên Video, Link MP3, Link text gốc, Text gốc, Link text cải tiến, Text cải tiến, Text no timeline, Gợi ý tiêu đề
             
             # Cập nhật Google Sheets
             body = {
@@ -4214,7 +4385,7 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                 alternative_names = ['mp3 to text', 'Mp3 to text', 'MP3 to text', 'Sheet1']
                 for alt_name in alternative_names:
                     try:
-                        range_name = f'{alt_name}!A{next_row}:H{next_row + len(update_data) - 1}'
+                        range_name = f'{alt_name}!A{next_row}:I{next_row + len(update_data) - 1}'
                         result = self.sheets_service.spreadsheets().values().update(
                             spreadsheetId=self.spreadsheet_id,
                             range=range_name,
@@ -4269,17 +4440,12 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
             - Không dùng từ suồng sã như "Alo alo", "Yo", "quẩy", "phá đảo"
             - **TỪ CẤM:** Không dùng "mách nước", "hack", "tự hào", "cả thế giới", "tuyệt vời", "độc đáo"
             - **TỪ THAY THẾ:** Dùng "chia sẻ", "hướng dẫn", "gợi ý", "bí quyết", "mẹo", "cách"
-            - **TỪ CUỐI CÂU KHÔNG CHUYÊN NGHIỆP:** Không dùng "nè", "ạ", "nhỉ", "đấy", "thế", "rồi" ở cuối câu
-            - **GIỌNG CHUYÊN NGHIỆP:** Kết thúc câu bằng dấu chấm, không dùng từ đệm không cần thiết
             
             **NỘI DUNG VIDEO:**
             {content[:500]}...
             
             **VÍ DỤ CÂU DẪN ĐẶC SẮC:**
             "Tủ quần áo lộn xộn đang 'bóp nghẹt' không gian sống. Giải pháp này sẽ thay đổi mọi thứ."
-            
-            **VÍ DỤ CÂU DẪN CHUYÊN NGHIỆP:**
-            "Tủ quần áo bừa bộn làm giảm hiệu quả sử dụng không gian. Cách sắp xếp này sẽ tối ưu hoàn toàn."
             
             **CÁCH KẾT HỢP MẪU VỚI NỘI DUNG:**
             - **PHÂN TÍCH NỘI DUNG:** Đọc kỹ nội dung video để hiểu chủ đề chính
@@ -4288,22 +4454,22 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
             - **GIỮ NGUYÊN PHONG CÁCH:** Duy trì giọng điệu, cấu trúc và sức mạnh của mẫu gốc
             
             **CÁC MẪU CÂU DẪN HAY ĐỂ THAM KHẢO:**
-            1. **Mẫu về vấn đề bỏ qua:** "Mấy việc dưới đây, nhiều nhà bỏ qua từ đầu → sau phải 'bù khẩn cấp', giá đội lên gấp vài lần."
-            2. **Mẫu về thiết kế đặc biệt:** "Thiết kế sau kệ TV có điểm đặc biệt. Nhìn ngoài thì tưởng đơn giản, nhưng bên trong lại là cả một bí mật 'đáng tiền'."
-            3. **Mẫu về quy trình:** "Xây nhà chưa bao giờ là chuyện dễ. Không thiếu người làm xong rồi mới ngồi tiếc: 'Biết thế…'. Vậy nên tổng hợp lại 23 bước hoàn thiện nhà, theo trình tự logic."
-            4. **Mẫu về chia sẻ kinh nghiệm:** "Hôm nay chia rõ mua gì online được – và không nên mua gì online khi làm nội thất."
-            5. **Mẫu về sai lầm phổ biến:** "Nhiều người cứ bảo 'để thợ lo', nhưng lúc hỏng thì mình mới là người sửa. Vậy nên xây nhà phải dặn kỹ – dặn từng chút một."
-            6. **Mẫu về khu vực khó:** "Bếp là khu vực khó xử lý nhất trong cả quá trình làm nhà – chỉ cần sai 1 bước nhỏ là ảnh hưởng đến cả chục năm sử dụng."
-            7. **Mẫu về chi tiết quan trọng:** "Khi nhà đang trong giai đoạn thi công, đây chính là lúc phải để ý kỹ mấy con số nhỏ nhỏ mà cực kỳ quan trọng này."
-            8. **Mẫu về quan niệm sai:** "Lần đầu làm nội thất, nhiều người hay nghĩ: phòng ngủ phải thật đẹp, thật ấn tượng. Nhưng thực ra, đây là nơi nghỉ ngơi mỗi ngày – chỉ cần yên tĩnh, dịu mắt và dễ chịu là đã đúng bài."
-            9. **Mẫu về câu hỏi phổ biến:** "Nói thật, 90% người làm nhà hỏi về cửa phòng ngủ thì câu đầu tiên đều là: 'Chọn màu gì đẹp?' Mà nếu chỉ quan tâm đến màu, thì xem xong câu đầu là dừng cũng được."
-            10. **Mẫu về kết quả lâu dài:** "Phòng khách này sau khi hoàn thiện, dám chắc 3–5 năm tới nhìn vẫn thấy đẹp, vẫn thấy sang."
-            11. **Mẫu về giải pháp toàn diện:** "Nếu muốn ở cho tiện – sạch – lâu bền, thì dù thuê thiết kế hay tự làm thì cùng nên lưu ý làm theo mấy điểm này, đảm bảo: bếp nhỏ cũng hóa rộng – ở lâu không thấy phiền."
-            12. **Mẫu về sai lầm thiết kế:** "Khi làm tủ quần áo, rất nhiều nhà chỉ quan tâm mỗi... chọn màu nào cho đẹp. Còn kích thước – bố cục – tiện dụng bên trong, thì giao hết cho bên thiết kế. Nhưng thực tế: sâu sai 1cm – mỗi lần đóng mở là thấy bực."
-            13. **Mẫu về bí mật kỹ thuật:** "Mua tủ lavabo cho phòng tắm, nhiều người chỉ nhìn mặt đá, màu hay kiểu dáng. Nhưng thực tế: xài sướng hay không nằm ở phần thiết kế – kỹ thuật bên trong."
-            14. **Mẫu về vấn đề thực tế:** "Khi cửa nhà vệ sinh nằm ngay cuối hành lang, nước tràn ra ngoài là chuyện cực kỳ phổ biến. Ở được vài năm thì tường bắt đầu ố vàng, bong tróc, mục nát – lúc đó sửa cũng chẳng dễ nữa."
+            1. **Mẫu về vấn đề bỏ qua:** "Mấy việc dưới đây, nhiều nhà bỏ qua từ đầu → sau phải 'bù khẩn cấp', giá đội lên gấp vài lần luôn đó!"
+            2. **Mẫu về thiết kế đặc biệt:** "Nào nào, mời xem thử thiết kế sau kệ TV có gì đặc biệt nhé! Nhìn ngoài thì tưởng đơn giản, nhưng bên trong lại là cả một bí mật 'đáng tiền' đấy!"
+            3. **Mẫu về quy trình:** "Xây nhà chưa bao giờ là chuyện dễ. Không thiếu người làm xong rồi mới ngồi tiếc: 'Biết thế…'. Vậy nên tổng hợp lại 23 bước hoàn thiện nhà, theo trình tự logic!"
+            4. **Mẫu về chia sẻ kinh nghiệm:** "Hôm nay chia rõ mua gì online được – và không nên mua gì online khi làm nội thất!"
+            5. **Mẫu về sai lầm phổ biến:** "Nhiều người cứ bảo 'để thợ lo', nhưng lúc hỏng thì mình mới là người sửa. Vậy nên xây nhà phải dặn kỹ – dặn từng chút một!"
+            6. **Mẫu về khu vực khó:** "Bếp là khu vực khó xử lý nhất trong cả quá trình làm nhà – chỉ cần sai 1 bước nhỏ là ảnh hưởng đến cả chục năm sử dụng!"
+            7. **Mẫu về chi tiết quan trọng:** "Khi nhà đang trong giai đoạn thi công, đây chính là lúc phải để ý kỹ mấy con số nhỏ nhỏ mà cực kỳ quan trọng này!"
+            8. **Mẫu về quan niệm sai:** "Lần đầu làm nội thất, nhiều người hay nghĩ: phòng ngủ phải thật đẹp, thật ấn tượng. Nhưng thực ra, đây là nơi nghỉ ngơi mỗi ngày – chỉ cần yên tĩnh, dịu mắt và dễ chịu là đã đúng bài rồi!"
+            9. **Mẫu về câu hỏi phổ biến:** "Nói thật, 90% người làm nhà hỏi về cửa phòng ngủ thì câu đầu tiên đều là: 'Chọn màu gì đẹp?' Mà nếu chỉ quan tâm đến màu, thì xem xong câu đầu là dừng cũng được rồi đó!"
+            10. **Mẫu về kết quả lâu dài:** "Phòng khách này sau khi hoàn thiện, dám chắc 3–5 năm tới nhìn vẫn thấy đẹp, vẫn thấy sang!"
+            11. **Mẫu về giải pháp toàn diện:** "Nếu muốn ở cho tiện – sạch – lâu bền, thì dù thuê thiết kế hay tự làm thì cùng nên lưu ý làm theo mấy điểm này, đảm bảo: bếp nhỏ cũng hóa rộng – ở lâu không thấy phiền!"
+            12. **Mẫu về sai lầm thiết kế:** "Khi làm tủ quần áo, rất nhiều nhà chỉ quan tâm mỗi... chọn màu nào cho đẹp! Còn kích thước – bố cục – tiện dụng bên trong, thì giao hết cho bên thiết kế. Nhưng thực tế: sâu sai 1cm – mỗi lần đóng mở là thấy bực!"
+            13. **Mẫu về bí mật kỹ thuật:** "Mua tủ lavabo cho phòng tắm, nhiều người chỉ nhìn mặt đá, màu hay kiểu dáng. Nhưng thực tế: xài sướng hay không nằm ở phần thiết kế – kỹ thuật bên trong!"
+            14. **Mẫu về vấn đề thực tế:** "Khi cửa nhà vệ sinh nằm ngay cuối hành lang, nước tràn ra ngoài là chuyện cực kỳ phổ biến. Ở được vài năm thì tường bắt đầu ố vàng, bong tróc, mục nát – lúc đó sửa cũng chẳng dễ nữa..."
             15. **Mẫu về triết lý sống:** "Nhà là để ở – không phải để trưng bày, càng không phải để so đo với thiên hạ. Nhiều người cứ nghĩ: làm càng nhiều – nhà càng đẹp, nhưng sự thật thì nhà càng đơn giản – càng dễ ở – càng bền đẹp lâu."
-            16. **Mẫu về giá trị sâu sắc:** "Nhà không chỉ để ở – mà là nơi hồi phục năng lượng mỗi ngày. Những căn nhà thực sự 'dưỡng người', ai sống trong đó khí sắc đều khác biệt, thường có 4 điểm giống nhau đến kỳ lạ."
+            16. **Mẫu về giá trị sâu sắc:** "Nhà không chỉ để ở – mà là nơi hồi phục năng lượng mỗi ngày. Những căn nhà thực sự 'dưỡng người', ai sống trong đó khí sắc đều khác biệt, thường có 4 điểm giống nhau đến kỳ lạ..."
             
             **QUY TRÌNH TẠO CÂU DẪN:**
             1. **ĐỌC NỘI DUNG:** Phân tích chủ đề chính của video
@@ -4399,7 +4565,7 @@ Bạn là biên dịch viên chuyên nghiệp, chuyên dịch các tài liệu v
                 logger.warning(f"⚠️ Không thể dọn dẹp file tạm: {str(e)}")
 
 
-def main(custom_folder_id=None):
+def main():
     """
     Hàm chính - Entry point của ứng dụng
     
@@ -4454,15 +4620,8 @@ def main(custom_folder_id=None):
 
         # Xử lý tất cả video
         print(f"\n🚀 BẮT ĐẦU XỬ LÝ TẤT CẢ VIDEO...")
-        
-        # Sử dụng folder ID từ argument nếu có, không thì dùng default
-        input_folder_to_use = INPUT_FOLDER_ID
-        if custom_folder_id:
-            input_folder_to_use = custom_folder_id
-            print(f"🔄 Sử dụng custom folder ID: {input_folder_to_use}")
-        
         results = processor.process_all_videos(
-            input_folder_to_use, 
+            INPUT_FOLDER_ID, 
             VOICE_ONLY_FOLDER_ID,
             TEXT_ORIGINAL_FOLDER_ID,
             TEXT_REWRITTEN_FOLDER_ID
@@ -4521,17 +4680,4 @@ def main(custom_folder_id=None):
 
 
 if __name__ == "__main__":
-    import argparse
-    
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Video Processor with custom folder support')
-    parser.add_argument('--custom-folder', type=str, help='Custom input folder ID to override default')
-    
-    args = parser.parse_args()
-    
-    # Override folder ID if custom folder is provided
-    if args.custom_folder:
-        INPUT_FOLDER_ID = args.custom_folder
-        print(f"🔄 Sử dụng custom folder ID: {INPUT_FOLDER_ID}")
-    
-    main(args.custom_folder if args.custom_folder else None) 
+    main() 

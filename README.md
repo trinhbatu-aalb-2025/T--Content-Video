@@ -1,144 +1,336 @@
-# 🎬 Video Converter - All-in-One Processing System
+# 🎬 Content Video Processor - Hệ Thống Xử Lý Video Toàn Diện
 
-Hệ thống xử lý video toàn diện: **MP4 → Voice Only → Text (VI/CN) → Translate → Rewrite → Drive**
+## 📋 Tổng Quan
 
-## 🚀 **TÍNH NĂNG CHÍNH**
+Hệ thống **Content Video Processor** cung cấp giải pháp toàn diện cho việc xử lý video tự động:
+**MP4 → Voice Only → Text (VI/CN) → Translate → Rewrite → Drive + Sheets**
 
-- ✅ **Tách voice từ video** (loại bỏ background music)
-- ✅ **Chuyển đổi voice thành text** (hỗ trợ tiếng Việt và tiếng Trung)
-- ✅ **Tự động dịch tiếng Trung sang tiếng Việt**
-- ✅ **Viết lại text bằng AI** (Gemini)
-- ✅ **Upload lên Google Drive** tự động
-- ✅ **Cập nhật Google Sheets** với kết quả
-- ✅ **Timeline chính xác** (giây 1-3: xin chào...)
+### 🚀 **Tính Năng Chính:**
+- **Tách voice từ video** (loại bỏ background music)
+- **Chuyển đổi voice → Text** bằng Deepgram API (hỗ trợ tiếng Việt và tiếng Trung)
+- **Tự động dịch tiếng Trung sang tiếng Việt** (nếu phát hiện)
+- **Viết lại text** bằng Gemini API với cấu trúc chuyên nghiệp
+- **Upload tự động** lên Google Drive và cập nhật Google Sheets
+- **Xử lý hàng loạt** với kiểm tra trạng thái thông minh
 
-## 📁 **CẤU TRÚC THƯ MỤC**
+## 📁 Cấu Trúc Dự Án
 
 ```
-video-converter/
-├── run/
-│   ├── all_in_one.py          # File chính
-│   └── prompt_template.txt    # Template viết lại text
-├── tools/
-│   ├── ffmpeg.exe            # FFmpeg binary
-│   └── install.bat           # Script cài đặt
-├── config/
-│   ├── client_secret_*.json  # Google Auth
-│   └── token.json            # Google token (tự tạo)
-├── docs/                     # Tài liệu hướng dẫn
-├── Instructions for use/      # Hướng dẫn sử dụng
-└── requirements.txt          # Dependencies
+Content-Video/
+├── README.md                           # File này - Hướng dẫn tổng quan
+├── run_video_processor.bat             # Script chung cho Windows (Khuyến nghị)
+├── run_video_processor.sh              # Script chung cho Linux/Mac (Khuyến nghị)
+├── run_windows.bat                     # Script wrapper cho Windows
+├── run_linux_mac.sh                    # Script wrapper cho Linux/Mac
+├── video_processor_runners/            # Bộ script chạy video processor
+│   ├── README.md                       # Hướng dẫn sử dụng runners
+│   ├── RUNNER_README.md               # Hướng dẫn chi tiết
+│   ├── windows/                       # Script cho Windows
+│   │   ├── README.md                  # Hướng dẫn Windows
+│   │   ├── run_video_processor.bat    # Batch script
+│   │   └── run_video_processor.ps1    # PowerShell script
+│   ├── linux_mac/                     # Script cho Linux/Mac
+│   │   ├── README.md                  # Hướng dẫn Linux/Mac
+│   │   └── run_video_processor.sh     # Bash script
+│   └── tools/                         # Công cụ hỗ trợ
+│       ├── README.md                  # Hướng dẫn tools
+│       └── check_drive_access.py      # Kiểm tra quyền truy cập Google Drive
+├── run/                               # Thư mục chứa script chính
+│   ├── all_in_one.py                  # Script chính xử lý video
+│   ├── video_checker.py               # Module kiểm tra video
+│   └── ...                            # Các module khác
+├── venv/                              # Virtual environment
+├── requirements.txt                   # Dependencies
+├── config/                            # Cấu hình
+├── tools/                             # Công cụ FFmpeg
+└── ...                                # Các file khác
 ```
 
-## 🔧 **CÁCH SỬ DỤNG**
+## 🚀 Cách Sử Dụng Nhanh
 
-### **1. Cài đặt dependencies:**
+### 🎯 **Script Chung (Khuyến Nghị):**
+
+#### **Trên Windows:**
+```cmd
+# Double-click hoặc chạy từ Command Prompt - Log ngắn gọn
+run_video_processor.bat
+
+# Chạy với log chi tiết để debug
+debug_all_in_one.bat
+
+```
+
+#### **Nếu script không chạy được:**
+```cmd
+
+# Mở Command Prompt
+# Di chuyển đến thư mục gốc: cd C:\Content-Video
+# Chạy script
+cmd /c run_video_processor.bat
+```
+
+#### **Trên Linux/Mac:**
 ```bash
-pip install -r requirements.txt
+# Cấp quyền thực thi
+chmod +x run_video_processor.sh
+
+# Chạy script
+./run_video_processor.sh
 ```
 
-### **2. Cấu hình API Keys:**
-- **Deepgram API Key:** Đã cấu hình sẵn
-- **Gemini API Key:** Đã cấu hình sẵn
-- **Google OAuth:** File `config/client_secret_*.json` đã có sẵn
+Script này sẽ:
+1. **Tự động phát hiện hệ điều hành**
+2. **Hiển thị menu chọn Windows/Mac**
+3. **Chạy script phù hợp** với hệ điều hành đã chọn
+4. **Sửa lỗi font chữ** với encoding UTF-8
 
-### **3. Cấu hình Google Drive Folders:**
-Mở file `run/all_in_one.py` (dòng 1634-1643) và thay đổi:
+### 🔧 **Lưu ý về Font Chữ:**
+- Các script đã được sửa để tránh lỗi hiển thị ký tự có dấu
+- Sử dụng encoding UTF-8 và ký tự ASCII đơn giản
+- Nếu vẫn gặp lỗi font, hãy thử chạy trong Command Prompt thay vì PowerShell
 
-```python
-# CẤU HÌNH TẠI ĐÂY - Thay đổi các giá trị bên dưới
-# ===================================================
+### 🔧 **Script Riêng Biệt (Tùy Chọn):**
 
-# ID của folder chứa video (input) - Thay đổi nếu cần
-INPUT_FOLDER_ID = "17_ncdjiRI2K4c4OA-sp3Uyi4bskP0CIu"
-
-# ID của folder để upload voice only - Thay đổi nếu cần  
-VOICE_ONLY_FOLDER_ID = "1FUP92ha2uaxPmB3a680eOd7TAqH1SqGT"
-
-# ID của folder để upload text gốc - Thay đổi nếu cần
-TEXT_ORIGINAL_FOLDER_ID = "1ZswATID5nLDRjap6yvDJYaa435Nrp8eo"
-
-# ID của folder để upload text đã viết lại - Thay đổi nếu cần
-TEXT_REWRITTEN_FOLDER_ID = "18XIdyGd-9ahPLHElJBBwXeATgcFanoQR"
+#### Windows:
+```cmd
+# Double-click hoặc chạy từ Command Prompt
+run_windows.bat
 ```
 
-### **4. Chạy hệ thống:**
+#### Linux/Mac:
 ```bash
-python run/all_in_one.py
+# Cấp quyền thực thi
+chmod +x run_linux_mac.sh
+
+# Chạy script
+./run_linux_mac.sh
 ```
 
-## 🔍 **Cách lấy Folder ID từ Google Drive:**
+### Kiểm tra quyền truy cập Google Drive:
+```bash
+python video_processor_runners/tools/check_drive_access.py
+```
 
-1. **Mở folder trên Google Drive** mà bạn muốn sử dụng
-2. **Copy URL** từ thanh địa chỉ trình duyệt
-3. **URL có dạng:** `https://drive.google.com/drive/folders/FOLDER_ID_HERE`
-4. **Copy phần `FOLDER_ID_HERE`** (chuỗi ký tự dài)
+## 🎯 Menu Options
 
-## 📋 **Giải thích từng folder:**
+Khi chạy script, bạn sẽ thấy menu với 3 options:
 
-#### **🎬 INPUT_FOLDER_ID** (Bắt buộc thay đổi)
-- **Chức năng:** Folder chứa video MP4 cần xử lý
-- **Cách thay đổi:** Thay ID này để lấy video từ drive khác
-- **Ví dụ:** Nếu muốn xử lý video từ folder khác, chỉ cần thay đổi ID này
+```
+================================
+VIDEO PROCESSOR MENU
+================================
+Chọn một trong các options sau:
 
-#### **🎤 VOICE_ONLY_FOLDER_ID** (Có thể giữ nguyên)
-- **Chức năng:** Folder lưu file MP3 voice only (đã tách khỏi video)
-- **Cách thay đổi:** Thay đổi nếu muốn lưu MP3 vào folder khác
+1. Chạy với folder hiện tại (sử dụng folder ID mặc định)
+2. Chạy với folder tùy chỉnh (nhập link hoặc ID Google Drive)
+3. Thoát
+```
 
-#### **📄 TEXT_ORIGINAL_FOLDER_ID** (Có thể giữ nguyên)
-- **Chức năng:** Folder lưu file text gốc từ video
-- **Cách thay đổi:** Thay đổi nếu muốn lưu text gốc vào folder khác
+### Option 1: Chạy với folder hiện tại
+- Sử dụng folder ID mặc định: `17_ncdjiRI2K4c4OA-sp3Uyi4bskP0CIu`
+- Chạy trực tiếp `all_in_one.py` không thay đổi
+- Phù hợp khi bạn muốn xử lý video trong folder cố định
 
-#### **✍️ TEXT_REWRITTEN_FOLDER_ID** (Có thể giữ nguyên)
-- **Chức năng:** Folder lưu file text đã viết lại bởi Gemini
-- **Cách thay đổi:** Thay đổi nếu muốn lưu text cải tiến vào folder khác
+### Option 2: Chạy với folder tùy chỉnh
+- **Hỗ trợ nhập link Google Drive hoặc ID**
+- Tự động tách ID từ link
+- Kiểm tra tính hợp lệ của ID
+- Tạo file Python tạm thời với folder ID mới
+- Xử lý video trong folder được chỉ định
+- Tự động dọn dẹp file tạm sau khi hoàn thành
 
-## 🔄 **Ví dụ thay đổi để lấy video từ drive khác:**
+### ✅ Các Định Dạng Link Hỗ Trợ:
+```
+✅ https://drive.google.com/drive/folders/1ABC123DEF456GHI789JKL
+✅ https://drive.google.com/file/d/1ABC123DEF456GHI789JKL/view
+✅ https://drive.google.com/open?id=1ABC123DEF456GHI789JKL
+✅ 1ABC123DEF456GHI789JKL (ID trực tiếp)
+```
 
+## 🔐 Quyền Truy Cập Google Drive
+
+### ✅ Có thể truy cập:
+- Folder được chia sẻ **công khai** (Anyone with the link)
+- Folder được chia sẻ với **email của tài khoản Google Cloud**
+- Folder thuộc về **tài khoản Google Cloud** đã xác thực
+
+### ❌ Không thể truy cập:
+- Folder **riêng tư** của tài khoản khác
+- Folder chỉ chia sẻ với **tài khoản khác**
+
+## 🛠️ Yêu Cầu Hệ Thống
+
+### Trước khi chạy, đảm bảo:
+1. **Python** 3.7+ đã được cài đặt
+2. **FFmpeg** đã được cài đặt và có trong PATH
+3. **Google Drive API** đã được bật
+4. **OAuth credentials** có quyền truy cập folder
+5. **Deepgram API key** hợp lệ
+6. **Gemini API key** hợp lệ
+
+### Script sẽ tự động:
+- Kiểm tra Python có sẵn không
+- Tạo virtual environment nếu chưa có
+- Kích hoạt virtual environment
+- Cài đặt dependencies từ `requirements.txt`
+- **Tách ID từ link Google Drive**
+- **Kiểm tra tính hợp lệ của ID**
+
+## 🔧 Cấu Hình API Keys
+
+### 1. **Deepgram API Key:**
 ```python
-# Trước khi thay đổi:
-INPUT_FOLDER_ID = "17_ncdjiRI2K4c4OA-sp3Uyi4bskP0CIu"
-
-# Sau khi thay đổi (ví dụ):
-INPUT_FOLDER_ID = "1ABC123DEF456GHI789JKL"  # ID folder mới chứa video
+# Trong file run/all_in_one.py (dòng 108)
+self.deepgram_api_key = '62577e5f53dd9757f0e88250e7326f78281bfa5b'
 ```
 
-## ⚠️ **Lưu ý quan trọng:**
+### 2. **Gemini API Key:**
+```python
+# Trong file run/all_in_one.py (dòng 113)
+self.gemini_api_key = 'AIzaSyCT45_AEnJETS3wsyjXbyKrj7w4US9KXZE'
+```
 
-1. **Chỉ cần thay đổi `INPUT_FOLDER_ID`** nếu muốn lấy video từ drive khác
-2. **Các folder khác có thể giữ nguyên** để lưu kết quả vào cùng một nơi
-3. **Đảm bảo folder có quyền truy cập** với Google account đang sử dụng
-4. **Kiểm tra folder tồn tại** trước khi chạy chương trình
+### 3. **Google OAuth Credentials:**
+- File `client_secret_*.json` đã có sẵn trong thư mục gốc
+- Token sẽ được tạo tự động khi chạy lần đầu
 
-## 📊 **Kết quả mong đợi:**
+## 📊 Kết Quả Mong Đợi
 
-- ✅ Voice only MP3 được upload lên Drive
-- ✅ Text gốc (với timeline) được upload lên Drive
-- ✅ Text viết lại (theo template) được upload lên Drive
-- ✅ Google Sheets được cập nhật tự động với links
-- ✅ Cột "Tên Video" được điền với tên file MP4 gốc
+### 📁 Files được tạo:
+- ✅ **Voice only MP3** được upload lên Drive
+- ✅ **Text gốc** (với timeline) được upload lên Drive
+- ✅ **Text viết lại** (cấu trúc đầy đủ) được upload lên Drive
+- ✅ **Text không timeline** (chỉ nội dung chính) được tạo
+- ✅ **Gợi ý tiêu đề, captions, CTA** được tạo
 
-## 🌐 **TÍNH NĂNG ĐẶC BIỆT**
+### 📊 Google Sheets được cập nhật:
+- ✅ **Cột A:** Link MP4 gốc
+- ✅ **Cột B:** Tên Video (từ file MP4)
+- ✅ **Cột C:** Link MP3 voice only
+- ✅ **Cột D:** Link text gốc
+- ✅ **Cột E:** Text gốc MP3 (có timeline)
+- ✅ **Cột F:** Link text cải tiến
+- ✅ **Cột G:** Text cải tiến (chỉ nội dung chính có timeline)
+- ✅ **Cột H:** Text no timeline (chỉ nội dung chính)
+- ✅ **Cột I:** Gợi ý tiêu đề (5 tiêu đề + 3 captions + 1 CTA)
 
-### **🔍 Tự động phát hiện ngôn ngữ:**
-- Hỗ trợ tiếng Việt và tiếng Trung
-- Tự động dịch tiếng Trung sang tiếng Việt
-- Timeline chính xác (giây 1-3: xin chào... giây 4-9: giới thiệu...)
+### 📋 Kết quả hiển thị:
+```
+🎉 === KẾT QUẢ XỬ LÝ ===
+📊 Tổng số video: 5
+✅ Thành công: 4
+❌ Thất bại: 1
+📊 Google Sheets đã được cập nhật tự động
 
-### **📊 Xử lý nhiều video:**
-- Tự động tìm và xử lý tất cả video trong folder
-- Cập nhật Google Sheets với kết quả từng video
+📋 CHI TIẾT VIDEO THÀNH CÔNG:
+  🎬 video1.mp4
+    🎤 Voice: 1abc123...
+    📄 Text: 2def456...
+    ✍️ Rewritten: 3ghi789...
 
-### **🎤 Voice Extraction:**
-- Tách voice từ video (loại bỏ background music)
-- Sử dụng FFmpeg với filter chuyên dụng
+🔗 LINKS:
+🎤 Voice Only Folder: https://drive.google.com/drive/folders/...
+📄 Text Original Folder: https://drive.google.com/drive/folders/...
+✍️ Text Rewritten Folder: https://drive.google.com/drive/folders/...
+```
 
-## 📞 **HỖ TRỢ**
+## 🔧 Troubleshooting
 
-Nếu gặp vấn đề:
-1. Kiểm tra tất cả cấu hình API keys và folder IDs
-2. Xem log file `all_in_one.log`
-3. Đảm bảo tất cả dependencies đã được cài đặt
-4. Kiểm tra quyền truy cập Google Drive/Sheets
+### Lỗi thường gặp:
 
-**🎉 Chúc bạn sử dụng hệ thống thành công!**
+#### 1. **"Python không được tìm thấy"**
+- **Giải pháp:** Cài đặt Python 3.7+ và thêm vào PATH
+
+#### 2. **"Không tìm thấy file all_in_one.py"**
+- **Giải pháp:** Chạy script từ thư mục gốc của dự án
+
+#### 3. **"Không thể kích hoạt virtual environment"**
+- **Giải pháp:** Kiểm tra thư mục `venv` và quyền truy cập
+
+#### 4. **"Không thể cài đặt dependencies"**
+- **Giải pháp:** Kiểm tra kết nối internet và file `requirements.txt`
+
+#### 5. **"Không thể tách ID từ link"**
+- **Giải pháp:** Kiểm tra link Google Drive có đúng format không
+
+#### 6. **"ID folder không hợp lệ"**
+- **Giải pháp:** ID Google Drive thường có 25-44 ký tự
+
+#### 7. **"Không có quyền truy cập folder"**
+- **Giải pháp:** Sử dụng `check_drive_access.py` để kiểm tra
+
+#### 8. **"OAuth authentication failed"**
+- **Giải pháp:** 
+  1. Kiểm tra file `client_secret_*.json`
+  2. Thêm email vào danh sách testers trong Google Cloud Console
+  3. Hoặc tạo OAuth credentials mới
+
+#### 9. **"FFmpeg not found"**
+- **Giải pháp:** Cài đặt FFmpeg và thêm vào PATH
+
+#### 10. **"API quota exceeded"**
+- **Giải pháp:** Kiểm tra Deepgram/Gemini API limits
+
+## 🔧 Cài Đặt FFmpeg
+
+### Windows:
+1. Tải FFmpeg từ https://ffmpeg.org/download.html
+2. Giải nén vào thư mục (ví dụ: `C:\ffmpeg`)
+3. Thêm `C:\ffmpeg\bin` vào PATH
+
+### Linux (Ubuntu/Debian):
+```bash
+sudo apt update
+sudo apt install ffmpeg
+```
+
+### macOS:
+```bash
+brew install ffmpeg
+```
+
+## 🔧 Giải Quyết Vấn Đề Google Cloud
+
+### Vấn đề: Ứng dụng chưa được Google xác minh
+
+#### Giải pháp 1: Thêm email vào danh sách testers (Khuyến nghị)
+1. Truy cập https://console.cloud.google.com/
+2. Vào **APIs & Services** > **OAuth consent screen**
+3. Tìm phần **Test users**
+4. Click **Add Users** và thêm email của bạn
+5. Click **Save**
+
+#### Giải pháp 2: Tạo OAuth credentials mới
+1. Tạo project mới trong Google Cloud Console
+2. Bật Google Drive API và Google Sheets API
+3. Tạo OAuth 2.0 Client ID cho Desktop application
+4. Tải file JSON và thay thế file cũ
+
+## 📖 Tài Liệu Chi Tiết
+
+### Xem các file README trong thư mục `video_processor_runners/`:
+- `video_processor_runners/README.md` - Hướng dẫn tổng quan
+- `video_processor_runners/RUNNER_README.md` - Hướng dẫn chi tiết
+- `video_processor_runners/windows/README.md` - Hướng dẫn Windows
+- `video_processor_runners/linux_mac/README.md` - Hướng dẫn Linux/Mac
+- `video_processor_runners/tools/README.md` - Hướng dẫn tools
+
+## 📞 Hỗ Trợ
+
+Nếu gặp vấn đề, hãy kiểm tra:
+1. Log file trong thư mục `run/`
+2. Cấu hình API keys
+3. Quyền truy cập Google Drive (sử dụng `check_drive_access.py`)
+4. Kết nối internet
+5. Format link Google Drive
+
+## 🎉 Kết Luận
+
+Hệ thống **Content Video Processor** cung cấp giải pháp toàn diện cho việc xử lý video:
+- **Tự động hóa hoàn toàn** từ video đến text
+- **Hỗ trợ đa ngôn ngữ** (Việt-Trung)
+- **AI-powered text rewriting** với cấu trúc chuyên nghiệp
+- **Tích hợp Google Drive/Sheets** để quản lý kết quả
+- **Xử lý hàng loạt** với kiểm tra trạng thái thông minh
+
+**🚀 Chúc bạn sử dụng hệ thống thành công!**
