@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Video Processor Runner for Mac/Linux - Detailed Log
 # Script này chạy từ thư mục gốc của dự án
@@ -155,4 +155,7 @@ done
 
 echo
 echo "[INFO] Hoàn thành!"
+
+
+
 
